@@ -4,37 +4,25 @@ const { findBestMatch } = require("../utils/faceUtils");
 
 const router = express.Router();
 
-// Helper function to validate faceData structure
-const isValidFaceData = (faceData) => {
-  return Array.isArray(faceData) && faceData.every(point => Array.isArray(point) && point.length === 2);
-};
-
 // Register a new face
 router.post("/register", async (req, res) => {
-  const { name, roll, faceData, profileImage, dateTime, status } = req.body;
-  console.log("Received face data:", req.body);
+  const { name, roll, faceEmbedding,  dateTime } = req.body;
 
-  // Validate required fields
-  if (!name || !roll || !faceData || !profileImage || !dateTime) {
-    return res.status(400).json({ message: "Name, roll number, profileImage, dateTime, and faceData are required." });
+  if (!name || !roll || !Array.isArray(faceEmbedding) || faceEmbedding.length !== 128 || !dateTime) {
+    return res.status(400).json({ message: "Invalid input. Ensure all required fields are correct." });
   }
 
-  if (!isValidFaceData(faceData)) {
-    return res.status(400).json({ message: "Invalid faceData format." });
+  if (!Array.isArray(faceEmbedding) || faceEmbedding.length !== 128) {
+    return res.status(400).json({ message: "Invalid face embedding format." });
   }
 
   try {
-    // Set default status if not provided
-    const finalStatus = status || { present: false, date: new Date() };
-
-    // Check if the roll number is already registered
     const existingFace = await Face.findOne({ roll });
     if (existingFace) {
       return res.status(400).json({ message: `Roll number ${roll} already registered.` });
     }
 
-    // Save the new face
-    const newFace = new Face({ name, roll, faceData, profileImage, dateTime, status: finalStatus });
+    const newFace = new Face({ name, roll, faceEmbedding, dateTime });
     await newFace.save();
 
     res.status(201).json({ message: "Face registered successfully!" });
@@ -44,68 +32,53 @@ router.post("/register", async (req, res) => {
   }
 });
 
-
-
-// Recognize a face
 router.post("/recognize", async (req, res) => {
-  const { faceData } = req.body;
+  const { faceEmbedding } = req.body;
 
-  if (!faceData) {
-    return res.status(400).json({ message: "faceData is required." });
+  // Ensure faceEmbedding is an array of length 128
+  if (!faceEmbedding || !Array.isArray(faceEmbedding) || faceEmbedding.length !== 128) {
+    return res.status(400).json({ message: "Valid face embedding is required." });
   }
 
   try {
-    const faces = await Face.find(); // Fetch all registered faces from the database
-    console.log("Faces in DB:", faces); // Log faces from the database
+    const faces = await Face.find(); // Fetch all registered faces
 
-    // Find the best match for the incoming faceData
-    const matchedFace = findBestMatch(faceData, faces);
+    // Use the findBestMatch function from utils to compare embeddings
+    const matchedFace = findBestMatch(faceEmbedding, faces); 
 
     if (matchedFace) {
       const { _id, name, roll, status } = matchedFace;
+      const todayDate = new Date().toLocaleDateString('en-GB');
 
-      // Check if the student is already marked as present today
-      const todayDate = new Date().toLocaleDateString('en-GB'); // Get the current date in format dd-mm-yyyy
-
-      // Check if the status already exists for today, if not, create it
-      if (status.date === todayDate) {
-        return res.status(200).json({ message: `Match found: ${name}, already marked as present today.` });
+      // Check if the student has already been marked present today
+      if (status && status.date === todayDate) {
+        return res.status(200).json({ message: `${name} already marked present today.` });
       }
 
-      // Update the status to present for the current date
-      matchedFace.status = {
-        present: true,
-        date: todayDate,
-      };
-
-      // Save the updated face data back to the database
+      // Update the status to "present" for the student
+      matchedFace.status = { present: true, date: todayDate };
       await matchedFace.save();
 
-      return res.status(200).json({ message: `Match found: ${name}, marked as present for today.` });
+      return res.status(200).json({ message: `${name} marked as present for today.` });
     } else {
       return res.status(404).json({ message: "No match found." });
     }
   } catch (error) {
-    console.error(error);
+    console.error("Error in face recognition:", error);
     res.status(500).json({ message: "Error in face recognition." });
   }
 });
 
-// Assuming you're using Express and Mongoose
 
 // Get all present students for the current day
 router.get("/present", async (req, res) => {
   try {
-    // Find all students whose status is 'present' for today
-    const allStudent = await Face.find()
-
-    // Send back the list of present students
-    res.status(200).json(allStudent);
+    const allStudents = await Face.find();
+    res.status(200).json(allStudents);
   } catch (error) {
     console.error("Error fetching present students:", error);
     res.status(500).json({ message: "Error fetching present students." });
   }
 });
-
 
 module.exports = router;
